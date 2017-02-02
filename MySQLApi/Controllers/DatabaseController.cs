@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Data;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Http;
+using Dapper;
 using MySql.Data.MySqlClient;
 using Swashbuckle.Swagger.Annotations;
 
@@ -13,6 +15,31 @@ namespace MySQLApi.Controllers
 {
     public class DatabaseController : ApiController
     {
+        /// <summary>
+        ///     Connects this instance.
+        /// </summary>
+        /// <returns></returns>
+        /// <exception cref="HttpResponseException"></exception>
+        private static IDbConnection Connect
+        {
+            get
+            {
+                try
+                {
+                    var cn = new MySqlConnection
+                    {
+                        ConnectionString = ConfigurationManager.AppSettings["ConnectionString"]
+                    };
+                    cn.Open();
+                    return cn;
+                }
+                catch (Exception e)
+                {
+                    throw new HttpResponseException(HttpStatusCode.InternalServerError) {Source = e.Message};
+                }
+            }
+        }
+
         /// <summary>
         ///     Gets the records.
         /// </summary>
@@ -22,52 +49,25 @@ namespace MySQLApi.Controllers
         /// <exception cref="HttpResponseMessage"></exception>
         [HttpGet]
         [SwaggerOperation("GetRecords")]
-        [SwaggerResponse(HttpStatusCode.OK)]
-        [SwaggerResponse(HttpStatusCode.NotFound)]
-        public async Task<dynamic> GetRecords(string query)
+        [SwaggerResponse(HttpStatusCode.OK, "Success")]
+        [SwaggerResponse(HttpStatusCode.BadRequest)]
+        public async Task<IEnumerable<dynamic>> GetRecords(string query)
         {
-            using (var con = Connect())
-            {
-                var list = new List<dynamic>();
-
-                try
-                {
-                    using (var cmd = new MySqlCommand(query, con))
-                    {
-                        var rdr = await cmd.ExecuteReaderAsync(CommandBehavior.Default, new CancellationToken());
-                        if (!rdr.HasRows)
-                            return new HttpResponseMessage(HttpStatusCode.NotFound)
-                            {
-                                Content = new StringContent("No Records Found")
-                            };
-                        while (rdr.Read())
-                            list.Add(rdr);
-
-                        return list;
-                    }
-                }
-                catch (Exception e)
-                {
-                    return new HttpResponseMessage(HttpStatusCode.BadRequest) {Content = new StringContent(e.Message)};
-                }
-            }
-        }
-
-        private static MySqlConnection Connect()
-        {
-            const string ConnStr =
-                "server=azu-lnx-hydratest;user=hellboy;database=vitaldev;port=3306;password=qu4gm1r3;";
-
-            using (var conn = new MySqlConnection(ConnStr))
+            using (var con = Connect)
             {
                 try
                 {
-                    conn.Open();
-                    return conn;
+                    var list = await con.QueryAsync(query).ConfigureAwait(false);
+
+                    var enumerable = list as IList<dynamic> ?? list.ToList();
+
+                    return enumerable;
                 }
                 catch (Exception e)
                 {
-                    throw new HttpResponseException(HttpStatusCode.InternalServerError) {Source = e.Message};
+                    var ex = new HttpResponseException(HttpStatusCode.InternalServerError);
+                    ex.Response.Content = new StringContent(e.Message);
+                    throw ex;
                 }
             }
         }
